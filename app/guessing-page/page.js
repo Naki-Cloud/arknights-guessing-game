@@ -1,7 +1,7 @@
 "use client";
 
 import AnswerBlock from "@/_components/answer-block";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import songs from "../../public/song-metadata/songs.json";
 import albums from "../../public/song-metadata/albums.json";
 import AudioPlayer from "react-h5-audio-player";
@@ -12,6 +12,12 @@ import "../../custom-audio-player.css";
 export default function GuessingPage({ setIsGameStarted, setRestartGame, isEnglishOnly }) {
     const [answerSelected, setAnswerSelected] = useState(false);
     const [correctAnswerData, setCorrectAnswerData] = useState(null);
+
+    const [lyrics, setLyrics] = useState([]);
+    const [currentLine, setCurrentLine] = useState(0);
+
+    const lyricsContainerRef = useRef(null);
+
 
     const filteredSongs = useMemo(() => {
         if (isEnglishOnly) {
@@ -42,6 +48,7 @@ export default function GuessingPage({ setIsGameStarted, setRestartGame, isEngli
         async function fetchAudio() {
             const response = await fetch("/api/fetch-audio?songCID=" + correctAnswer.cid);
 
+
             if (response.ok) {
                 setCorrectAnswerData(await response.json());
             }
@@ -52,13 +59,117 @@ export default function GuessingPage({ setIsGameStarted, setRestartGame, isEngli
 
     console.log(correctAlbumCover);
 
+    const parseLRC = (lrcText) => {
+    const lines = lrcText.split("\n");
+    return lines
+        .map((line) => {
+            const match = line.match(/\[(\d+):(\d+\.\d+)\](.*)/);
+            if (match) {
+                const minutes = parseInt(match[1], 10);
+                const seconds = parseFloat(match[2]);
+                const time = minutes * 60 + seconds;
+                const text = match[3].trim();
+                return { time, text };
+            }
+            return null;
+        })
+        .filter(Boolean);
+
+    };
+
+    useEffect(() => {
+    if (!correctAnswerData?.data?.lyricUrl) return;
+
+    async function fetchLyrics() {
+        try {
+            const response = await fetch(
+                "/api/fetch-album-art?albumLink=" + correctAnswerData.data.lyricUrl
+            );
+
+            if (!response.ok) throw new Error("Failed to fetch lyrics");
+
+            const text = await response.text();
+            setLyrics(parseLRC(text));
+        } catch (err) {
+            console.error(err);
+            setLyrics([]);
+        }
+    }
+
+    fetchLyrics();
+    }, [correctAnswerData]);
+
+    
+
+    console.log(correctAnswer.lyricUrl);
+    // Sync lyrics with audio
+    useEffect(() => {
+        const audioEl = document.querySelector("audio");
+        if (!audioEl) return;
+
+        const onTimeUpdate = () => {
+            if (!lyrics.length) return;
+            const current = audioEl.currentTime;
+            let i = 0;
+            for (; i < lyrics.length; i++) {
+                if (current < lyrics[i].time) break;
+            }
+            setCurrentLine(i - 1 >= 0 ? i - 1 : 0);
+            
+        };
+
+        audioEl.addEventListener("timeupdate", onTimeUpdate);
+        return () => audioEl.removeEventListener("timeupdate", onTimeUpdate);
+    }, [lyrics]);
+
+    useEffect(() => {
+    if (!lyricsContainerRef.current) return;
+    const activeLine = lyricsContainerRef.current.querySelector(
+        `[data-line="${currentLine}"]`
+    );
+    if (activeLine) {
+        activeLine.scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+        });
+    }
+    }, [currentLine]);
+
     return (
         <div className="bg-blue-950 w-full h-full text-white p-5 flex flex-col items-center justify-center">
+             
             {correctAlbumCover && correctAnswerData?.data?.sourceUrl && (
                 <section className="w-full pb-5 flex items-center justify-center">
-                    <img className="w-2/5 rounded-md" src={`/api/fetch-album-art?albumLink=${correctAlbumCover}`} alt="a random album cover" ></img>
-                </section>
-            )}
+                    <img className="ml-5 w-2/5 rounded-md" src={`/api/fetch-album-art?albumLink=${correctAlbumCover}`} alt="RIP album cover :(" ></img>
+                    {/* Lyrics Section */}
+                    {lyrics.length > 0 ? (
+                        <section
+                            ref={lyricsContainerRef}
+                            className="ml-5 mr-5 rounded-md mb-5 bg-gray-700/50 mt-6 w-full h-90 overflow-y-auto text-center space-y-2"
+                        >
+                            {lyrics.map((line, idx) => (
+                                <p
+                                    key={idx}
+                                    data-line={idx}
+                                    className={`transition-colors ${
+                                        idx === currentLine
+                                            ? "mt-4 mb-4 text-yellow-400 font-bold text-2xl"
+                                            : "text-gray-400"
+                                    }`}
+                                >
+                                    {line.text || "..."}
+                                </p>
+                            ))}
+                        </section>
+                    ) : (
+                        <section className="ml-5 mr-5 rounded-md mb-5 bg-gray-700/50 mt-6 w-full h-full text-center text-gray-400 italic flex items-center justify-center">
+                            No lyrics available
+                        </section>
+                    )}
+                        </section>
+                        
+                )}
+            
 
             <section className="w-full">
                 {correctAnswerData?.data?.sourceUrl && (
